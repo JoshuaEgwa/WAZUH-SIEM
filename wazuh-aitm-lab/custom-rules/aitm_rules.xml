@@ -1,0 +1,162 @@
+<!--
+  AiTM lab — custom detection rules
+  =================================
+  Attack chain modeled (MITRE):
+    Phishing lure -> reverse-proxy portal (T1557 AiTM) -> credential + live
+    session-cookie theft (T1550.004 web session cookie) -> cookie replay /
+    MFA bypass (T1078 valid accounts) -> account takeover -> mailbox-rule
+    persistence (T1114.003) + directory recon (T1087) -> lateral movement /
+    suspicious PowerShell (T1059.001).
+
+  Rule IDs 100100-100199 reserved for this lab.
+  Severity scale: 7 = suspicious, 10 = likely malicious, 12 = high, 15 = critical incident.
+-->
+
+<group name="aitm,">
+
+  <!-- ===================================================================
+       1. Reverse-proxy (evilginx) — initial access / credential relay
+       =================================================================== -->
+  <rule id="100120" level="3">
+    <decoded_as>evilginx</decoded_as>
+    <description>AiTM: reverse-proxy portal access logged.</description>
+    <group>attack_initial_access,mitre,</group>
+    <mitre><id>T1557</id></mitre>
+  </rule>
+
+  <rule id="100121" level="10">
+    <if_sid>100120</if_sid>
+    <field name="creds_relayed">1</field>
+    <description>AiTM: victim credentials relayed through lookalike portal ($(portal)) for $(dstuser).</description>
+    <group>attack_initial_access,credential_access,mitre,</group>
+    <mitre><id>T1557</id><id>T1056.003</id></mitre>
+  </rule>
+
+  <rule id="100122" level="12">
+    <if_sid>100121</if_sid>
+    <field name="session_cookie">\.*captured\.*</field>
+    <description>AiTM: live session cookie captured at proxy for $(dstuser) — token theft (T1550.004).</description>
+    <group>attack_initial_access,credential_access,mitre,</group>
+    <mitre><id>T1550.004</id><id>T1557</id></mitre>
+  </rule>
+
+  <!-- ===================================================================
+       2. Entra sign-in logs (JSON)
+       =================================================================== -->
+  <rule id="100100" level="0">
+    <decoded_as>json</decoded_as>
+    <field name="log_source">entra_signin</field>
+    <description>Entra sign-in event.</description>
+  </rule>
+
+  <rule id="100101" level="8">
+    <if_sid>100100</if_sid>
+    <field name="anonymizer">true</field>
+    <field name="result">success</field>
+    <description>AiTM: successful sign-in from anonymizer/VPN IP $(src_ip) for $(dstuser).</description>
+    <group>authentication_success,mitre,</group>
+    <mitre><id>T1078</id><id>T1557</id></mitre>
+  </rule>
+
+  <!-- The core tell-tale: MFA satisfied WITHOUT a prompt = replayed token -->
+  <rule id="100102" level="12">
+    <if_sid>100100</if_sid>
+    <field name="mfa_result">satisfiedByToken</field>
+    <field name="mfa_prompted">false</field>
+    <field name="result">success</field>
+    <description>AiTM: MFA satisfied without a prompt for $(dstuser) — replayed session token / MFA bypass.</description>
+    <group>authentication_success,mitre,</group>
+    <mitre><id>T1550.004</id><id>T1078</id></mitre>
+  </rule>
+
+  <rule id="100103" level="10">
+    <if_sid>100100</if_sid>
+    <field name="impossible_travel">true</field>
+    <description>AiTM: impossible travel detected for $(dstuser) (sign-in from $(geo_city)/$(geo_country)).</description>
+    <group>authentication_success,mitre,</group>
+    <mitre><id>T1078</id></mitre>
+  </rule>
+
+  <rule id="100104" level="10">
+    <if_sid>100100</if_sid>
+    <field name="session_reuse">true</field>
+    <description>AiTM: reused session ID $(session_id) for $(dstuser) — stolen cookie replay.</description>
+    <group>authentication_success,mitre,</group>
+    <mitre><id>T1550.004</id></mitre>
+  </rule>
+
+  <!-- ===================================================================
+       3. M365 mailbox activity (JSON) — post-ATO persistence
+       =================================================================== -->
+  <rule id="100110" level="0">
+    <decoded_as>json</decoded_as>
+    <field name="log_source">m365_mailbox</field>
+    <description>M365 mailbox audit event.</description>
+  </rule>
+
+  <rule id="100111" level="12">
+    <if_sid>100110</if_sid>
+    <field name="operation">New-InboxRule</field>
+    <description>AiTM: attacker created inbox forwarding rule "$(rule_name)" forwarding $(dstuser)'s mail to $(forward_to).</description>
+    <group>persistence,mitre,</group>
+    <mitre><id>T1114.003</id><id>T1098</id></mitre>
+  </rule>
+
+  <rule id="100112" level="12">
+    <if_sid>100110</if_sid>
+    <field name="operation">Set-Mailbox</field>
+    <field name="forward_to">\.+</field>
+    <description>AiTM: mailbox forwarding set on $(dstuser) to external address $(forward_to).</description>
+    <group>persistence,mitre,</group>
+    <mitre><id>T1114.003</id></mitre>
+  </rule>
+
+  <!-- ===================================================================
+       4. Post-ATO endpoint events (JSON) — recon + lateral movement
+       =================================================================== -->
+  <rule id="100130" level="0">
+    <decoded_as>json</decoded_as>
+    <field name="log_source">endpoint</field>
+    <description>Endpoint process event.</description>
+  </rule>
+
+  <rule id="100131" level="10">
+    <if_sid>100130</if_sid>
+    <field name="log_event">powershell</field>
+    <description>AiTM: suspicious PowerShell under compromised identity $(dstuser) on $(host): $(command_line).</description>
+    <group>execution,mitre,</group>
+    <mitre><id>T1059.001</id></mitre>
+  </rule>
+
+  <rule id="100132" level="8">
+    <if_sid>100130</if_sid>
+    <field name="log_event">directory_recon</field>
+    <description>AiTM: directory/recon activity by $(dstuser) on $(host) — $(command_line).</description>
+    <group>discovery,mitre,</group>
+    <mitre><id>T1087</id><id>T1069</id></mitre>
+  </rule>
+
+  <!-- ===================================================================
+       5. Correlation — stitch the chain into one CRITICAL incident
+       =================================================================== -->
+
+  <!-- Token-replay sign-in followed by mailbox persistence = confirmed ATO.
+       In this single-victim dataset only the attack ever triggers 100102/100111,
+       so a frequency correlation is both safe and reliable. -->
+  <rule id="100150" level="15" frequency="2" timeframe="86400">
+    <if_matched_sid>100102</if_matched_sid>
+    <if_sid>100111</if_sid>
+    <description>AiTM INCIDENT: account takeover — MFA-bypass sign-in(s) followed by mailbox persistence ($(dstuser)).</description>
+    <group>attack_chain,mitre,</group>
+    <mitre><id>T1557</id><id>T1550.004</id><id>T1114.003</id></mitre>
+  </rule>
+
+  <!-- Repeated anonymizer sign-ins -->
+  <rule id="100151" level="12" frequency="2" timeframe="86400">
+    <if_matched_sid>100101</if_matched_sid>
+    <description>AiTM: repeated anonymizer-IP sign-ins for $(dstuser).</description>
+    <group>authentication_success,mitre,</group>
+    <mitre><id>T1078</id></mitre>
+  </rule>
+
+</group>

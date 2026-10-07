@@ -1,0 +1,12 @@
+# Frozen dataset artifacts (exceed GitHub's 100 MB limit — host externally)
+data/*.tgz
+
+# Cloned at pinned tag by setup.sh — not committed
+wazuh-docker/
+
+# Generated synthetic logs (instructor builds these locally)
+datagen/output/
+
+# OS cruft
+.DS_Store
+*.bak

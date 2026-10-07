@@ -1,0 +1,27 @@
+<!--
+  AiTM lab — custom decoders
+  ==========================
+  Sign-in / mailbox / endpoint events are authored as JSON and are parsed by
+  Wazuh's built-in `json` decoder (every key becomes a matchable field), so
+  they need NO custom decoder here.
+
+  The reverse-proxy (evilginx-style) access log is authored as a plain-text
+  line — exactly like a real nginx/evilginx access log — and therefore needs a
+  real custom decoder to extract its fields. That decoder is below.
+
+  Log line shape produced by datagen/:
+    evilginx: ts=2025-04-14T09:10:02Z src=203.0.113.45 method=POST uri=/login \
+      status=302 portal=login.northwind-trading.com.secure-access.io \
+      user=j.rivera@northwind-trading.com creds=1 cookie=ESTSAUTH_captured \
+      ua="Mozilla/5.0 (Windows NT 10.0)"
+-->
+
+<decoder name="evilginx">
+  <prematch>^evilginx: </prematch>
+</decoder>
+
+<decoder name="evilginx-fields">
+  <parent>evilginx</parent>
+  <regex offset="after_parent">ts=(\S+) src=(\S+) method=(\w+) uri=(\S+) status=(\d+) portal=(\S+) user=(\S+) creds=(\d+) cookie=(\S+) ua="(\.+)"</regex>
+  <order>evt_time,srcip,http_method,url,http_status,portal,dstuser,creds_relayed,session_cookie,user_agent</order>
+</decoder>
